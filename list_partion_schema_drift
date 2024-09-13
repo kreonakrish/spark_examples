@@ -1,0 +1,55 @@
+from pyspark.sql import SparkSession
+from pyspark.sql.types import StructType
+import os
+
+# Initialize Spark session
+spark = SparkSession.builder.appName("GroupBySchemaInS3").getOrCreate()
+
+# S3 path to the directory containing Parquet files
+s3_path = "s3a://your-bucket-name/your-path/"
+
+# List all files in the S3 directory
+file_paths = dbutils.fs.ls(s3_path)
+
+# Function to get schema of a Parquet file and extract partition info from its path
+def get_parquet_schema(file_path):
+    # Read the Parquet file to infer schema
+    df = spark.read.parquet(file_path.path)
+    
+    # Get schema as StructType
+    schema = df.schema
+    
+    # Extract partition info from the path (assuming partitioning in S3 path, e.g., s3://bucket/part=...)
+    partition = os.path.dirname(file_path.path).split("/")[-1]
+    
+    return (partition, schema)
+
+# Store schemas of all files and group by partition
+partition_schemas = {}
+
+for file_path in file_paths:
+    partition, schema = get_parquet_schema(file_path)
+    
+    # Group schemas by partition
+    if partition not in partition_schemas:
+        partition_schemas[partition] = []
+    partition_schemas[partition].append(schema)
+
+# Identify partitions with different schemas
+partitions_with_different_schemas = {}
+
+for partition, schemas in partition_schemas.items():
+    # Compare schemas within each partition
+    reference_schema = schemas[0]
+    for schema in schemas:
+        if schema != reference_schema:
+            partitions_with_different_schemas[partition] = schemas
+            break
+
+# Output the partitions where schemas differ
+if partitions_with_different_schemas:
+    print("Partitions with different schemas:")
+    for partition, schemas in partitions_with_different_schemas.items():
+        print(f"Partition: {partition}")
+else:
+    print("All partitions have consistent schemas.")
